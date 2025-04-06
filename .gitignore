@@ -1,7 +1,6 @@
 logs/
 dev/
 .vscode/
-frames*/
 # Custom sandbox.
 sandbox.py
 
