@@ -1,8 +1,8 @@
-import json
 import os
 
 import cv2
 import methods
+import pandas as pd
 
 
 def extract_frames(video_path: str, output_folder: str, frame_interval: int = 1):
@@ -26,21 +26,22 @@ def extract_frames(video_path: str, output_folder: str, frame_interval: int = 1)
     print(f"Extracted {saved_count}/{frame_count} frames to {output_folder}")
 
 
-def compute_features(image_folder, result_path):
+def create_dataframe(image_folder):
+    features = []
     files = [f for f in os.listdir(image_folder) if f.endswith(".jpg")]
-    feats = {}
-
+    files.sort()
     for file in files:
         image = cv2.imread(f"{image_folder}/{file}")
-        feats[file] = {
-            "brenner": float(methods.compute_brenner_gradient(image)),
-            "sobel": float(methods.compute_sobel_variance(image)),
-            "tenengrad": float(methods.compute_tenengrad(image)),
-            "laplacian": float(methods.compute_laplacian(image)),
-        }
-
-    with open(result_path, "w") as fp:
-        json.dump(feats, fp, sort_keys=True, indent=4)
+        features.append(
+            [
+                file,
+                methods.compute_brenner_gradient(image),
+                methods.compute_sobel_variance(image),
+                methods.compute_tenengrad(image),
+                methods.compute_laplacian(image),
+            ]
+        )
+    return pd.DataFrame(features, columns=["file", "brenner", "sobel", "tenengrad", "laplacian"])
 
 
 if __name__ == "__main__":
@@ -50,4 +51,5 @@ if __name__ == "__main__":
     frame_interval = 7
 
     extract_frames(video_path, image_folder, frame_interval)
-    compute_features(image_folder, result_path)
+    df = create_dataframe(image_folder)
+    print(df.to_string())
