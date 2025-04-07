@@ -97,12 +97,13 @@ if __name__ == "__main__":
     all_folder = "./frames/all/"
     focus_folder = "./frames/focus/"
     frame_interval = 7
+    pd.set_option("display.max_rows", None)
 
     # Prepare
     extract_frames(video_path, all_folder, frame_interval)
     df = create_dataframe(all_folder)
     df = label_dataframe(df, focus_folder)
-    print(f"Data\n{df.to_string()}\n")
+    print(f"Data\n{df}\n")
 
     X = df[FEAT_COLUMNS]
     y = df["label"]
