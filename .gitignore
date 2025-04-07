@@ -1,6 +1,7 @@
 logs/
 dev/
 .vscode/
+catboost_info/
 # Custom sandbox.
 sandbox.py
 
