@@ -7,16 +7,24 @@ from catboost import CatBoostClassifier
 from methods import brenner_gradient, laplacian, sobel_variance, tenengrad
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import precision_score, recall_score
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import KFold
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
 
 FEAT_COLUMNS = [f.__name__ for f in [brenner_gradient, laplacian, sobel_variance, tenengrad]]
 
+# Define model constructors using lambda functions, so that each call returns a new instance
+MODEL_CONSTRUCTORS = {
+    "Logistic Regression": lambda: LogisticRegression(max_iter=1000),
+    "KNN": lambda: KNeighborsClassifier(),
+    "Decision Tree": lambda: DecisionTreeClassifier(),
+    "CatBoost": lambda: CatBoostClassifier(verbose=0),
+}
+
 
 def extract_frames(video_path: str, output_folder: str, frame_interval: int = 1):
-    cap = cv2.VideoCapture(f"{video_path}")
-    os.makedirs(f"{output_folder}", exist_ok=True)
+    cap = cv2.VideoCapture(video_path)
+    os.makedirs(output_folder, exist_ok=True)
     frame_count = 0
     saved_count = 0
     if cap.isOpened():
@@ -62,12 +70,7 @@ def label_dataframe(df: pd.DataFrame, image_folder: str):
 
 
 def train_models(X_train, y_train):
-    models = {
-        "Logistic Regression": LogisticRegression(),
-        "KNN": KNeighborsClassifier(),
-        "Decision Tree": DecisionTreeClassifier(),
-        "CatBoost": CatBoostClassifier(verbose=0),
-    }
+    models = {name: constructor() for name, constructor in MODEL_CONSTRUCTORS.items()}
     for name, model in models.items():
         model.fit(X_train, y_train)
     return models
@@ -81,6 +84,30 @@ def evaluate(models: dict, X_test, y_test):
             {"Model": name, "Precision": precision_score(y_test, y_pred), "Recall": recall_score(y_test, y_pred)}
         )
     return pd.DataFrame(results)
+
+
+def cross_validate_models(X: pd.DataFrame, y: pd.Series, n_splits: int = 5):
+    kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+    cv_results = {name: {"Precision": [], "Recall": []} for name in MODEL_CONSTRUCTORS.keys()}
+
+    for train_idx, test_idx in kf.split(X):
+        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+        y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+
+        fold_models = train_models(X_train, y_train)
+        fold_eval = evaluate(fold_models, X_test, y_test)
+
+        for _, row in fold_eval.iterrows():
+            cv_results[row["Model"]]["Precision"].append(row["Precision"])
+            cv_results[row["Model"]]["Recall"].append(row["Recall"])
+
+    avg_results = []
+    for model_name, metrics in cv_results.items():
+        avg_precision = np.mean(metrics["Precision"])
+        avg_recall = np.mean(metrics["Recall"])
+        avg_results.append({"Model": model_name, "Precision": avg_precision, "Recall": avg_recall})
+
+    return pd.DataFrame(avg_results)
 
 
 def predict_image(image_path: str, models: dict):
@@ -107,13 +134,12 @@ if __name__ == "__main__":
 
     X = df[FEAT_COLUMNS]
     y = df["label"]
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
 
-    # Train-evaluate
-    models = train_models(X_train, y_train)
-    results = evaluate(models, X_test, y_test)
-    print(f"Train results\n{results}\n")
+    # K-fold cross-validation
+    cv_results = cross_validate_models(X, y, n_splits=5)
+    print(f"K-fold Cross Validation Results\n{cv_results}\n")
 
-    # Predict
-    results = predict_image("./maxim-bogdanov-wjAR4jo979Y-unsplash.jpg", models)
-    print(f"Prediction\n{results}\n")
+    # Train final models on the entire dataset
+    final_models = train_models(X, y)
+    prediction = predict_image("./maxim-bogdanov-wjAR4jo979Y-unsplash.jpg", final_models)
+    print(f"Prediction\n{prediction}\n")
