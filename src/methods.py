@@ -1,3 +1,6 @@
+import inspect
+import sys
+
 import cv2
 import numpy as np
 
@@ -26,3 +29,12 @@ def tenengrad(gray_image: np.ndarray):
 def laplacian(gray_image: np.ndarray):
     laplacian = cv2.Laplacian(gray_image, cv2.CV_64F)  # Apply Laplacian filter
     return np.var(laplacian)  # Compute variance of Laplacian
+
+
+feat_funcs = [obj for name, obj in inspect.getmembers(sys.modules[__name__]) if (inspect.isfunction(obj))]
+FEAT_COLUMNS = [f.__name__ for f in feat_funcs]
+
+
+def compute_features(image: np.ndarray):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)  # Conver to grayscale
+    return [f(gray) for f in feat_funcs]

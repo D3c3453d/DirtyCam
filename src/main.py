@@ -4,14 +4,12 @@ import cv2
 import numpy as np
 import pandas as pd
 from catboost import CatBoostClassifier
-from methods import brenner_gradient, laplacian, sobel_variance, tenengrad
+from methods import FEAT_COLUMNS, compute_features
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import precision_score, recall_score
 from sklearn.model_selection import KFold
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
-
-FEAT_COLUMNS = [f.__name__ for f in [brenner_gradient, laplacian, sobel_variance, tenengrad]]
 
 # Define model constructors using lambda functions, so that each call returns a new instance
 MODEL_CONSTRUCTORS = {
@@ -41,16 +39,6 @@ def extract_frames(video_path: str, output_folder: str, frame_interval: int = 1)
         frame_count += 1
     cap.release()
     print(f"Extracted {saved_count}/{frame_count} frames to {output_folder}\n")
-
-
-def compute_features(image: np.ndarray):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)  # Convert to grayscale
-    return [
-        brenner_gradient(gray),
-        sobel_variance(gray),
-        tenengrad(gray),
-        laplacian(gray),
-    ]
 
 
 def create_dataframe(image_folder: str):
