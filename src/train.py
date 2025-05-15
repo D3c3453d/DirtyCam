@@ -6,7 +6,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from catboost import CatBoostClassifier
-from features import FEAT_COLUMNS, compute_features
+from features import FeatureExtractor
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import precision_score, recall_score
 from sklearn.model_selection import KFold
@@ -67,13 +67,17 @@ def train_and_save(X: pd.DataFrame, y: pd.Series, model_dir: str, n_splits: int 
 def build_dataframe(all_dir: str, focus_dir: str):
     files = sorted(f for f in os.listdir(all_dir) if f.endswith(".jpg"))
     data = []
+    feat_ext = FeatureExtractor()
     for fname in files:
         img = cv2.imread(os.path.join(all_dir, fname))
-        feats = compute_features(img)
+        print(f"{fname} read")
+        feats = feat_ext.compute_features(img)
+        print(f"{fname} feats calculated")
         label = int(fname in os.listdir(focus_dir))
-        data.append({"file": fname, **dict(zip(FEAT_COLUMNS, feats)), "label": label})
+        data.append({"file": fname, **dict(zip(feat_ext.columns, feats)), "label": label})
+        print(f"{fname} data saved")
     df = pd.DataFrame(data)
-    X = df[FEAT_COLUMNS]
+    X = df[feat_ext.columns]
     y = df["label"]
     return X, y
 
@@ -84,6 +88,5 @@ if __name__ == "__main__":
     parser.add_argument("--focus-frames", required=True)
     parser.add_argument("--model-dir", default="../models")
     args = parser.parse_args()
-
     X, y = build_dataframe(args.all_frames, args.focus_frames)
     train_and_save(X, y, args.model_dir)

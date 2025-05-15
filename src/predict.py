@@ -4,7 +4,7 @@ import os
 import cv2
 import joblib
 import pandas as pd
-from features import FEAT_COLUMNS, compute_features
+from features import FeatureExtractor
 
 
 def load_models(model_dir: str) -> dict:
@@ -17,15 +17,16 @@ def load_models(model_dir: str) -> dict:
     return models
 
 
-def predict(models: dict, image_paths: list, feature_fn, feat_cols: list) -> pd.DataFrame:
+def predict(models: dict, img_paths: list) -> pd.DataFrame:
     """
     Run prediction over a list of image paths using loaded models.
     """
     rows = []
-    for path in image_paths:
+    feat_ext = FeatureExtractor()
+    for path in img_paths:
         img = cv2.imread(path)
-        feats = feature_fn(img)
-        df = pd.DataFrame([feats], columns=feat_cols)
+        feats = feat_ext.compute_features(img)
+        df = pd.DataFrame([feats], columns=feat_ext.columns)
         for name, model in models.items():
             pred = model.predict(df)[0]
             rows.append({"file": path, "model": name, "prediction": int(pred)})
@@ -34,10 +35,10 @@ def predict(models: dict, image_paths: list, feature_fn, feat_cols: list) -> pd.
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("images", nargs="+", help="Paths to images to predict")
+    parser.add_argument("imgs", nargs="+", help="Paths to images to predict")
     parser.add_argument("--model-dir", default="../models")
     args = parser.parse_args()
 
     models = load_models(args.model_dir)
-    results = predict(models, args.images, compute_features, FEAT_COLUMNS)
+    results = predict(models, args.imgs)
     print(results.to_string(index=False))

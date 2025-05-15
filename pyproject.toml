@@ -14,6 +14,8 @@ pandas = "^2.2.3"
 scikit-learn = "^1.6.1"
 catboost = "^1.2.7"
 joblib = "^1.5.0"
+pybrisque = "^1.0"
+libsvm = {git = "https://github.com/akbargumbira/libsvm-python.git"}
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^3.8.0"
