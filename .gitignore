@@ -2,6 +2,8 @@ data/bad/*
 data/good/*
 data/raw/*
 data/predict/*
+models/*
+catboost_info
 logs/
 dev/
 .vscode/
