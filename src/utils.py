@@ -22,3 +22,9 @@ def extract_frames(video_path: str, output_folder: str, frame_interval: int = 1)
         frame_count += 1
     cap.release()
     print(f"Extracted {saved_count}/{frame_count} frames to {output_folder}\n")
+
+
+if []:
+    print(True)
+else:
+    print(False)

@@ -1,16 +1,19 @@
 import inspect
+import logging
+from pathlib import Path
 
 import cv2
 import numpy as np
 from brisque import BRISQUE
 
+logging.basicConfig(level=logging.INFO)
+
 
 class FeatureExtractor:
     def __init__(self):
-        methods_dict = self.__get_methods()
+        self.__methods_dict = self.__get_methods()
         self.__brisq = BRISQUE()
-        self.columns = list(methods_dict.keys())
-        self.__methods = list(methods_dict.values())
+        self.columns = list(self.__methods_dict.keys())
 
     def __brenner_gradient(self, gray_img: np.ndarray, *args, **kwargs):
         shifted = np.roll(gray_img, -2, axis=1)  # Shift by 2 pixels horizontally
@@ -34,10 +37,10 @@ class FeatureExtractor:
         laplacian = cv2.Laplacian(gray_img, cv2.CV_64F)  # Apply Laplacian filter
         return np.var(laplacian)  # Compute variance of Laplacian
 
-    def __brisque(self, gray_img: np.ndarray, *args, **kwargs):
-        score = self.__brisq.get_score(gray_img)
-        print(f"brisq: {score}")
-        return score
+    # def __brisque(self, gray_img: np.ndarray, *args, **kwargs):
+    #     score = self.__brisq.get_score(gray_img)
+    #     print(f"brisq: {score}")
+    #     return score
 
     def __get_methods(self):
         prefix = "__"
@@ -54,6 +57,11 @@ class FeatureExtractor:
             )
         }
 
-    def compute_features(self, img: np.ndarray):
-        gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)  # Convert to grayscale
-        return [m(self, gray_img=gray_img) for m in self.__methods]
+    def extract_features(self, path: Path) -> dict | None:
+        img = cv2.imread(str(path))
+        if img is None:
+            logging.warning(f"Failed to read image: {path}")
+            return None
+        gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        feat_row = {name: method(self, gray_img=gray_img) for name, method in self.__methods_dict.items()}
+        return feat_row

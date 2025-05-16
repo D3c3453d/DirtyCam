@@ -1,7 +1,10 @@
+data/bad/*
+data/good/*
+data/raw/*
+data/predict/*
 logs/
 dev/
 .vscode/
-catboost_info/
 # Custom sandbox.
 sandbox.py
 
