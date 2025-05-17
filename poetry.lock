@@ -1387,6 +1387,26 @@ files = [
 ]
 
 [[package]]
+name = "pydom"
+version = "0.1"
+description = "Sharpness Estimation for Document and Scene Images."
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = []
+develop = false
+
+[package.dependencies]
+numpy = "*"
+opencv-python = "*"
+
+[package.source]
+type = "git"
+url = "https://github.com/umang-singhal/pydom.git"
+reference = "HEAD"
+resolved_reference = "2554af8d08a80658539f002eae58ece89cbcc6d4"
+
+[[package]]
 name = "pygments"
 version = "2.19.1"
 description = "Pygments is a syntax highlighting package written in Python."
@@ -1900,4 +1920,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10, <3.13"
-content-hash = "bc85771ffb354aef2f8a814da9427af1d733de491c7b52a9dc926002d3286bf3"
+content-hash = "94d500a317dea10bc04118e5267cc23261064a251e1d08de31f805b3cc19b105"

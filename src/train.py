@@ -50,6 +50,8 @@ def _build_label_list(raw_dir: Path, good_dir: Path, bad_dir: Path) -> list[tupl
 
 
 def _extract_features_parallel(files_to_process: list[tuple[Path, int]], feat_ext: FeatureExtractor) -> list[dict]:
+    total_count = len(files_to_process)
+    processed_count = 0
     data = []
 
     def process(path: Path, label: int):
@@ -59,12 +61,15 @@ def _extract_features_parallel(files_to_process: list[tuple[Path, int]], feat_ex
         logger.warning(f"Unreadable: {path.name}")
         return None
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=16) as executor:
         futures = [executor.submit(process, path, label) for path, label in files_to_process]
         for f in as_completed(futures):
             result = f.result()
             if result:
                 data.append(result)
+            processed_count += 1
+            if processed_count % 10 == 0:
+                logger.info(f"Processed: {processed_count}/{total_count}")
 
     return data
 
@@ -75,7 +80,7 @@ def build_dataframe(raw_dir: Path, good_dir: Path, bad_dir: Path) -> tuple[pd.Da
     data = _extract_features_parallel(files_to_process, feat_ext)
 
     df = pd.DataFrame(data)
-    # logger.info(df)
+    logger.info(df)
     return df[feat_ext.columns], df["label"]
 
 

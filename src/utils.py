@@ -1,6 +1,8 @@
 import os
 
 import cv2
+from dom import DOM
+from settings import PREDICT_DIR
 
 
 def extract_frames(video_path: str, output_folder: str, frame_interval: int = 1):
@@ -24,7 +26,5 @@ def extract_frames(video_path: str, output_folder: str, frame_interval: int = 1)
     print(f"Extracted {saved_count}/{frame_count} frames to {output_folder}\n")
 
 
-if []:
-    print(True)
-else:
-    print(False)
+dom = DOM()
+print(dom.get_sharpness(str(PREDICT_DIR / "maxim-bogdanov-wjAR4jo979Y-unsplash.jpg")))

@@ -1,7 +1,4 @@
-data/bad/*
-data/good/*
-data/raw/*
-data/predict/*
+data/*
 models/*
 catboost_info
 logs/

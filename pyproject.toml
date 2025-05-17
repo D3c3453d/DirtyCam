@@ -16,6 +16,8 @@ catboost = "^1.2.7"
 joblib = "^1.5.0"
 pybrisque = "^1.0"
 libsvm = {git = "https://github.com/akbargumbira/libsvm-python.git"}
+pydom = {git = "https://github.com/umang-singhal/pydom.git"}
+
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^3.8.0"
