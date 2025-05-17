@@ -58,8 +58,8 @@ class FeatureExtractor:
     def _feat_laplacian(self, gray_img: np.ndarray, *args, **kwargs):
         return np.var(cv2.Laplacian(gray_img, cv2.CV_64F))  # Compute variance of Laplacian
 
-    def _feat_kumar(self, img: np.ndarray, *args, **kwargs):
-        return self._dom.get_sharpness(img)
+    # def _feat_dom(self, img: np.ndarray, *args, **kwargs):
+    #     return self._dom.get_sharpness(img)
 
     def _feat_brisque(self, gray_img: np.ndarray, *args, **kwargs):
         return self._brisque.get_score(gray_img)
