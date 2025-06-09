@@ -1,4 +1,3 @@
-import inspect
 import logging
 from pathlib import Path
 
@@ -16,11 +15,25 @@ logger = logging.getLogger(__name__)
 
 
 class FeatureExtractor:
+    class feature:
+        def __init__(self, func):
+            self.func = func
+
+        def __set_name__(self, owner, name):
+            owner.columns.append(name)
+
+        def __get__(self, instance, owner):
+            if instance is None:
+                # accessing on the class
+                return self.func
+            # binding the function to the instance
+            return self.func.__get__(instance, owner)
+
+    columns = []  # list of feature‐names
+
     def __init__(self):
-        self._methods = self._get_methods()
         self._brisque = BRISQUE()
         self._dom = DOM()
-        self.columns = list(self._methods.keys())
 
     def extract_features(self, path: Path) -> dict | None:
         img = cv2.imread(str(path))
@@ -28,43 +41,42 @@ class FeatureExtractor:
             logger.warning(f"Failed to read image: {path}")
             return None
         gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        return {name: method(gray_img=gray_img, img=img, path=path) for name, method in self._methods.items()}
-
-    def _get_methods(self):
-        prefix = "_feat_"
-        return {
-            name[len(prefix) :]: method
-            for name, method in inspect.getmembers(self, inspect.ismethod)
-            if name.startswith(prefix)
-        }
+        return {name: getattr(self, name)(gray_img=gray_img, img=img, path=path) for name in self.columns}
 
     # --- Feature methods ---
 
-    def _feat_brenner_gradient(self, gray_img: np.ndarray, *args, **kwargs):
+    @feature
+    def brenner_gradient(self, gray_img: np.ndarray, *args, **kwargs):
         shifted = np.roll(gray_img, -2, axis=1)  # Shift by 2 pixels horizontally
         return np.sum((gray_img - shifted) ** 2)  # Sum all squared differences as the focus measure
 
-    def _feat_sobel_variance(self, gray_img: np.ndarray, *args, **kwargs):
+    @feature
+    def sobel_variance(self, gray_img: np.ndarray, *args, **kwargs):
         sobel_x = cv2.Sobel(gray_img, cv2.CV_64F, 1, 0, ksize=3)  # Sobel X gradient
         sobel_y = cv2.Sobel(gray_img, cv2.CV_64F, 0, 1, ksize=3)  # Sobel Y gradient
         magnitude = np.sqrt(sobel_x**2 + sobel_y**2)  # Compute gradient magnitude
         return np.mean(magnitude) + np.var(gray_img)  # Combine Sobel and variance of pixel intensities
 
-    def _feat_tenengrad(self, gray_img: np.ndarray, *args, **kwargs):
+    @feature
+    def tenengrad(self, gray_img: np.ndarray, *args, **kwargs):
         sobel_x = cv2.Sobel(gray_img, cv2.CV_64F, 1, 0, ksize=3)  # Sobel filter in X direction
         sobel_y = cv2.Sobel(gray_img, cv2.CV_64F, 0, 1, ksize=3)  # Sobel filter in Y direction
         return np.mean(np.sqrt(sobel_x**2 + sobel_y**2))  # Return mean gradient magnitude as focus score
 
-    def _feat_laplacian(self, gray_img: np.ndarray, *args, **kwargs):
+    @feature
+    def laplacian(self, gray_img: np.ndarray, *args, **kwargs):
         return np.var(cv2.Laplacian(gray_img, cv2.CV_64F))  # Compute variance of Laplacian
 
-    # def _feat_dom(self, img: np.ndarray, *args, **kwargs):
+    # @feature
+    # def dom(self, img: np.ndarray, *args, **kwargs):
     #     return self._dom.get_sharpness(img)
 
-    def _feat_brisque(self, gray_img: np.ndarray, *args, **kwargs):
+    @feature
+    def brisque(self, gray_img: np.ndarray, *args, **kwargs):
         return self._brisque.get_score(gray_img)
 
-    def _feat_texture_quality(self, gray_img: np.ndarray, *args, **kwargs):
+    @feature
+    def texture_quality(self, gray_img: np.ndarray, *args, **kwargs):
         def radial_average(arr: np.ndarray) -> np.ndarray:
             N = arr.shape[0]
             y, x = np.indices((N, N))
@@ -100,30 +112,36 @@ class FeatureExtractor:
 
         return np.sum(MTF * CSF)
 
-    def _feat_smd(self, gray_img: np.ndarray, *args, **kwargs):
+    @feature
+    def smd(self, gray_img: np.ndarray, *args, **kwargs):
         dx = np.abs(gray_img[1:, :-1] - gray_img[:-1, :-1])
         dy = np.abs(gray_img[:-1, 1:] - gray_img[:-1, :-1])
         return np.sum(dx + dy)
 
-    def _feat_smd2(self, gray_img: np.ndarray, *args, **kwargs):
+    @feature
+    def smd2(self, gray_img: np.ndarray, *args, **kwargs):
         dx = np.abs(gray_img[:-1, :-1] - gray_img[1:, :-1])
         dy = np.abs(gray_img[:-1, :-1] - gray_img[:-1, 1:])
         return np.sum(dx * dy)
 
-    def _feat_variance(self, gray_img: np.ndarray, *args, **kwargs):
+    @feature
+    def variance(self, gray_img: np.ndarray, *args, **kwargs):
         return np.var(gray_img)
 
-    def _feat_energy(self, gray_img: np.ndarray, *args, **kwargs):
+    @feature
+    def energy(self, gray_img: np.ndarray, *args, **kwargs):
         dx = gray_img[1:, :-1] - gray_img[:-1, :-1]
         dy = gray_img[:-1, 1:] - gray_img[:-1, :-1]
         return np.sum((dx**2) * (dy**2))
 
-    def _feat_vollath(self, gray_img: np.ndarray, *args, **kwargs):
+    @feature
+    def vollath(self, gray_img: np.ndarray, *args, **kwargs):
         u = np.mean(gray_img)
         shifted = gray_img[1:, :] * gray_img[:-1, :]
         return np.sum(shifted) - gray_img.shape[0] * gray_img.shape[1] * (u**2)
 
-    def _feat_entropy(self, gray_img: np.ndarray, *args, **kwargs):
+    @feature
+    def entropy(self, gray_img: np.ndarray, *args, **kwargs):
         hist = cv2.calcHist([gray_img], [0], None, [256], [0, 256])
         hist_norm = hist.ravel() / hist.sum()
         hist_nonzero = hist_norm[hist_norm > 0]
