@@ -3,3 +3,4 @@
 2. `pipx install poetry` - ставит poetry
 3. `poetry install` - создаёт окружение и ставит все нужные пакеты
 4. `poetry run pre-commit install` - ставит линтеры
+5. `sudo apt install libsvm-dev` - зависимость для pybrisque

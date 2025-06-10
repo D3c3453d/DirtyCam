@@ -41,26 +41,23 @@ class FeatureExtractor:
             logger.warning(f"Failed to read image: {path}")
             return None
         gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        return {name: getattr(self, name)(gray_img=gray_img, img=img, path=path) for name in self.columns}
+        sobel_x = cv2.Sobel(gray_img, cv2.CV_64F, 1, 0, ksize=3)  # Sobel X gradient
+        sobel_y = cv2.Sobel(gray_img, cv2.CV_64F, 0, 1, ksize=3)  # Sobel Y gradient
+        return {name: getattr(self, name)(gray_img=gray_img, sobel_x=sobel_x, sobel_y=sobel_y) for name in self.columns}
 
     # --- Feature methods ---
 
     @feature
-    def brenner_gradient(self, gray_img: np.ndarray, *args, **kwargs):
-        shifted = np.roll(gray_img, -2, axis=1)  # Shift by 2 pixels horizontally
-        return np.sum((gray_img - shifted) ** 2)  # Sum all squared differences as the focus measure
+    def brenner_gradient(self, gray_img: np.ndarray, *args, **kwargs):  # Shift by 2 pixels horizontally
+        return np.sum((gray_img[:, :-2] - gray_img[:, 2:]) ** 2)  # and sum all squared differences as the focus measure
 
     @feature
-    def sobel_variance(self, gray_img: np.ndarray, *args, **kwargs):
-        sobel_x = cv2.Sobel(gray_img, cv2.CV_64F, 1, 0, ksize=3)  # Sobel X gradient
-        sobel_y = cv2.Sobel(gray_img, cv2.CV_64F, 0, 1, ksize=3)  # Sobel Y gradient
+    def sobel_variance(self, gray_img: np.ndarray, sobel_x: np.ndarray, sobel_y: np.ndarray, *args, **kwargs):
         magnitude = np.sqrt(sobel_x**2 + sobel_y**2)  # Compute gradient magnitude
         return np.mean(magnitude) + np.var(gray_img)  # Combine Sobel and variance of pixel intensities
 
     @feature
-    def tenengrad(self, gray_img: np.ndarray, *args, **kwargs):
-        sobel_x = cv2.Sobel(gray_img, cv2.CV_64F, 1, 0, ksize=3)  # Sobel filter in X direction
-        sobel_y = cv2.Sobel(gray_img, cv2.CV_64F, 0, 1, ksize=3)  # Sobel filter in Y direction
+    def tenengrad(self, sobel_x: np.ndarray, sobel_y: np.ndarray, *args, **kwargs):
         return np.mean(np.sqrt(sobel_x**2 + sobel_y**2))  # Return mean gradient magnitude as focus score
 
     @feature
@@ -71,9 +68,9 @@ class FeatureExtractor:
     # def dom(self, img: np.ndarray, *args, **kwargs):
     #     return self._dom.get_sharpness(img)
 
-    @feature
-    def brisque(self, gray_img: np.ndarray, *args, **kwargs):
-        return self._brisque.get_score(gray_img)
+    # @feature
+    # def brisque(self, gray_img: np.ndarray, *args, **kwargs):
+    #     return self._brisque.get_score(gray_img)
 
     @feature
     def texture_quality(self, gray_img: np.ndarray, *args, **kwargs):
