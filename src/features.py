@@ -55,16 +55,18 @@ class FeatureExtractor:
                 [[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=torch.float32, device=self.device
             ).view(1, 1, 3, 3)
 
-    def extract_features(self, path: Path) -> dict | None:
+    def extract_features_path(self, path: Path) -> dict | None:
         img = cv2.imread(str(path))
         if img is None:
             logger.warning(f"Failed to read image: {path}")
             return None
+        gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        return self.extract_features(gray_img)
 
+    def extract_features(self, gray_img) -> dict | None:
         # Initialize kernels on first use
         self._init_kernels()
 
-        gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         gray_tensor = torch.from_numpy(gray_img).float().to(self.device)
         gray_batch = gray_tensor.unsqueeze(0).unsqueeze(0)
 

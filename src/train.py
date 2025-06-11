@@ -54,7 +54,7 @@ def _process_file(args: tuple[Path, int]) -> dict | None:
     path, label = args
     try:
         feat_ext = FeatureExtractor()
-        feats = feat_ext.extract_features(path)
+        feats = feat_ext.extract_features_path(path)
         if feats:
             return {"file": path.name, **feats, "label": label}
         logger.warning(f"Unreadable: {path.name}")
