@@ -11,212 +11,287 @@ import pandas as pd
 from features import FeatureExtractor
 from settings import LOG_FORMAT, MODEL_DIR, PREDICT_DIR
 
-logging.basicConfig(
-    level=logging.INFO,
-    format=LOG_FORMAT,
-)
+logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
 logger = logging.getLogger(__name__)
 
 
 def load_models(model_dir: Path) -> dict:
-    """Load all .joblib models from a directory."""
+    """
+    Загружает все модели .joblib из директории.
+    Возвращает словарь name->модель.
+    """
     if not model_dir.is_dir():
         raise FileNotFoundError(f"Model directory not found: {model_dir}")
-
     models = {}
     for file in model_dir.glob("*.joblib"):
         try:
-            models[file.stem] = joblib.load(file)
+            model = joblib.load(file)
+            models[file.stem] = model
             logger.info(f"Model loaded: {file.name}")
         except Exception as e:
             logger.warning(f"Failed to load model {file.name}: {e}")
-
     if not models:
-        raise RuntimeError(f"No models found in {model_dir}")
-
+        raise RuntimeError(f"No .joblib models found in {model_dir}")
     return models
 
 
-def _ensemble_predict(models: dict, features: dict) -> dict:
-    """Make predictions with all models and ensemble results."""
+def ensemble_predict(models: dict, features: dict[str, float]) -> dict:
+    """
+    Делаем предсказания всеми моделями, возвращаем:
+      - avg_probability: средняя вероятность класса 1 (если есть predict_proba; иначе 0/1)
+      - ensemble_pred: 1 если avg_probability > 0.5, иначе 0
+      - majority_vote: 1 если большинство моделей предсказало 1
+      - individual: словарь name->pred (0/1)
+    """
     df = pd.DataFrame([features])
-    predictions = []
-    probabilities = []
+    probs = []
+    preds = []
 
     for name, model in models.items():
         try:
-            # Получаем вероятность класса 1 (качественное изображение)
-            proba = model.predict_proba(df)[0][1]
+            proba = float(model.predict_proba(df)[0][1])
             pred = 1 if proba > 0.5 else 0
+        except (AttributeError, IndexError):
+            # Нет predict_proba или неожиданный формат
+            pred = int(model.predict(df)[0])
+            proba = float(pred)
+        preds.append(pred)
+        probs.append(proba)
 
-            predictions.append(pred)
-            probabilities.append(proba)
-        except AttributeError:
-            # Если модель не поддерживает predict_proba
-            pred = model.predict(df)[0]
-            predictions.append(pred)
-            probabilities.append(pred)  # Используем 0/1 как вероятность
-
-    # Ансамблирование: средняя вероятность + порог 0.5
-    avg_probability = np.mean(probabilities)
-    ensemble_pred = 1 if avg_probability > 0.5 else 0
-
-    # Ансамблирование: большинство голосов
-    majority_vote = 1 if sum(predictions) > len(models) / 2 else 0
+    avg_prob = float(np.mean(probs))
+    ensemble_pred = 1 if avg_prob > 0.5 else 0
+    majority_vote = 1 if sum(preds) > len(models) / 2 else 0
 
     return {
-        "avg_probability": avg_probability,
+        "avg_probability": avg_prob,
         "ensemble_pred": ensemble_pred,
         "majority_vote": majority_vote,
-        "individual": dict(zip(models.keys(), predictions)),
+        "individual": dict(zip(models.keys(), preds)),
     }
 
 
-def predict_video(models: dict, video_source: str, output_file: str = None, max_frames: int = None):
-    """Process video stream in real-time with ensemble prediction."""
-    feat_ext = FeatureExtractor()
-    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;udp"
-    # Открываем видео источник (файл или камеру)
-    if video_source.isdigit():
-        cap = cv2.VideoCapture(int(video_source))  # Веб-камера
-    else:
-        cap = cv2.VideoCapture(video_source, cv2.CAP_FFMPEG)  # Видео файл
+class Predictor:
+    def __init__(self, models: dict, show_window: bool = True, window_name: str = "QualityAssessment"):
+        self.models = models
+        self.feat_ext = FeatureExtractor()
+        self.show_window = show_window
+        self.window_name = window_name
 
-    if not cap.isOpened():
-        raise IOError(f"Cannot open video source: {video_source}")
+    def _draw_overlay(self, frame: np.ndarray, predictions: dict) -> None:
+        """
+        Рисует на кадре метки качества и FPS.
+        """
+        ensemble = predictions["ensemble_pred"]
+        avg_prob = predictions["avg_probability"]
 
-    # Настройка вывода видео
-    if output_file:
-        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        out = cv2.VideoWriter(output_file, fourcc, fps, (frame_width, frame_height))
+        label_text = "Quality: Good" if ensemble else "Quality: Bad"
+        color = (0, 255, 0) if ensemble else (0, 0, 255)
+        prob_text = f"Prob: {avg_prob:.2f}"
 
-    frame_count = 0
-    processing_times = []
-    cv2.namedWindow("Video Quality Assessment", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("Video Quality Assessment", 1600, 1000)
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+        # Тут можно настроить позиции/шрифт/толщину по вкусу
+        cv2.putText(frame, label_text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2)
+        cv2.putText(frame, prob_text, (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
-        frame_count += 1
-        if max_frames and frame_count > max_frames:
-            break
+    def predict_image(self, image_path: Path) -> dict | None:
+        """
+        Предсказание по одному изображению.
+        Возвращает словарь результатов или None, если не удалось прочитать.
+        """
+        img = cv2.imread(str(image_path))
+        if img is None:
+            logger.warning(f"Cannot read image: {image_path}")
+            return None
 
-        start_time = time.time()
-
-        # Преобразуем кадр в серый для извлечения признаков
-        gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         try:
-            # Извлекаем признаки из кадра
-            features = feat_ext.extract_features(gray_frame)
-
-            if features:
-                # Получаем предсказания для кадра
-                predictions = _ensemble_predict(models, features)
-
-                # Отображаем результаты на кадре
-                label = f"Quality: {'Good' if predictions['ensemble_pred'] else 'Bad'}"
-                prob = f"Prob: {predictions['avg_probability']:.2f}"
-
-                cv2.putText(
-                    frame,
-                    label,
-                    (20, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1,
-                    (0, 255, 0) if predictions["ensemble_pred"] else (0, 0, 255),
-                    2,
-                )
-                cv2.putText(frame, prob, (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            features = self.feat_ext.extract_features(gray)
+            if not features:
+                logger.warning(f"No features extracted for {image_path}")
+                return None
+            preds = ensemble_predict(self.models, features)
+            result = {
+                "file": image_path.name,
+                **preds,
+                **preds.get("individual", {}),
+            }
+            return result
         except Exception as e:
-            logger.error(f"Error processing frame {frame_count}: {e}")
+            logger.error(f"Error processing image {image_path}: {e}")
+            return None
 
-        # Рассчитываем FPS обработки
-        processing_time = time.time() - start_time
-        processing_times.append(processing_time)
-        fps = 1 / processing_time if processing_time > 0 else 0
+    def predict_images_in_dir(self, predict_dir: Path) -> pd.DataFrame:
+        """
+        Проходит по всем файлам в директории, предсказывает.
+        Возвращает DataFrame с колонками: file, avg_probability, ensemble_pred, majority_vote, <по моделям>.
+        """
+        if not predict_dir.is_dir():
+            raise FileNotFoundError(f"No such directory: {predict_dir}")
+        image_files = sorted(predict_dir.iterdir())
+        if not image_files:
+            raise FileNotFoundError(f"No files found in {predict_dir}")
+        results = []
+        for path in image_files:
+            logger.info(f"Processing image: {path.name}")
+            res = self.predict_image(path)
+            if res:
+                results.append(res)
+        if results:
+            df = pd.DataFrame(results)
+        else:
+            df = pd.DataFrame(columns=["file", "avg_probability", "ensemble_pred", "majority_vote"])
+        return df
 
-        cv2.putText(frame, f"Proc FPS: {fps:.1f}", (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+    def predict_video(  # NOQA: C901
+        self,
+        video_source: str,
+        output_file: str = None,
+        max_frames: int = None,
+        target_fps_display: float = 30.0,
+    ) -> None:
+        """
+        Предсказание на видеопотоке или файле.
+        video_source: либо строка с путём, либо индекс камеры ("0", "1", ...).
+        output_file: если указан, сохраняем аннотированное видео туда.
+        max_frames: при необходимости ограничить число кадров.
+        target_fps_display: задержка между кадрами для отображения (в FPS).
+        """
+        # Открываем источник
+        if video_source.isdigit():
+            cap = cv2.VideoCapture(int(video_source))
+        else:
+            if video_source.startswith("rtsp"):
+                os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;udp"
+            cap = cv2.VideoCapture(video_source)
+        if not cap.isOpened():
+            raise IOError(f"Cannot open video source: {video_source}")
 
-        # Показываем кадр
-        cv2.imshow("Video Quality Assessment", frame)
-
-        # Сохраняем кадр при необходимости
+        out_writer = None
         if output_file:
-            out.write(frame)
+            # Параметры видео для записи
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps_in = cap.get(cv2.CAP_PROP_FPS) or target_fps_display
+            # Используем mp4v или тот же кодек
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            out_writer = cv2.VideoWriter(output_file, fourcc, fps_in, (width, height))
+            if not out_writer.isOpened():
+                logger.warning(f"Cannot open VideoWriter for {output_file}, skipping save.")
 
-        # Прерывание по клавише 'q'
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+        if self.show_window:
+            cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+            # Можно подогнать размер окна при желании
+            cv2.resizeWindow(self.window_name, 1600, 1000)
 
-    # Рассчет статистики производительности
-    if processing_times:
-        avg_fps = 1 / np.mean(processing_times)
-        logger.info(f"Processed {frame_count} frames. Average FPS: {avg_fps:.1f}")
+        frame_count = 0
+        processing_times = []
 
-    cap.release()
-    if output_file:
-        out.release()
-    cv2.destroyAllWindows()
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                logger.info("End of video stream or cannot read frame.")
+                break
 
+            frame_count += 1
+            if max_frames is not None and frame_count > max_frames:
+                logger.info(f"Reached max frames: {max_frames}. Stopping.")
+                break
 
-def predict_images(models: dict, predict_dir: Path):
-    """Predict quality for images in directory (original functionality)."""
-    feat_ext = FeatureExtractor()
-    image_files = list(predict_dir.glob("*")) if predict_dir.is_dir() else []
-    if not image_files:
-        raise FileNotFoundError(f"No images found in {predict_dir}")
+            start = time.time()
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            try:
+                features = self.feat_ext.extract_features(gray)
+                if features:
+                    preds = ensemble_predict(self.models, features)
+                    self._draw_overlay(frame, preds)
+                else:
+                    logger.debug(f"No features for frame {frame_count}")
+            except Exception as e:
+                logger.error(f"Error processing frame {frame_count}: {e}")
 
-    results = []
-    for image_path in image_files:
-        logger.info(f"Processing: {image_path.name}")
-        features = feat_ext.extract_features_path(image_path)
+            elapsed = time.time() - start
+            processing_times.append(elapsed)
+            fps_proc = 1.0 / elapsed if elapsed > 0 else 0.0
+            # Рисуем FPS обработки
+            cv2.putText(frame, f"Proc FPS: {fps_proc:.1f}", (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
-        if not features:
-            logger.warning(f"Skipping unreadable image: {image_path.name}")
-            continue
+            # Показать окно
+            if self.show_window:
+                cv2.imshow(self.window_name, frame)
+            # Сохранить кадр
+            if out_writer:
+                out_writer.write(frame)
 
-        try:
-            predictions = _ensemble_predict(models, features)
-            results.append(
-                {
-                    "file": image_path.name,
-                    "avg_probability": predictions["avg_probability"],
-                    "ensemble_pred": predictions["ensemble_pred"],
-                    "majority_vote": predictions["majority_vote"],
-                    **predictions["individual"],
-                }
-            )
-        except Exception as e:
-            logger.error(f"Prediction failed for {image_path.name}: {e}")
+            # Обработка нажатия клавиш
+            # Пауза по 'p', выход по 'q' или ESC
+            key = cv2.waitKey(int(1000 / target_fps_display)) & 0xFF
+            if key == ord("q") or key == 27:  # ESC
+                logger.info("User requested exit.")
+                break
+            elif key == ord("p"):
+                logger.info("Paused. Press any key to resume.")
+                cv2.waitKey(0)
 
-    return pd.DataFrame(results)
+        # Вывод средней производительности
+        if processing_times:
+            avg_fps = 1.0 / np.mean(processing_times)
+            logger.info(f"Processed {frame_count} frames. Average processing FPS: {avg_fps:.1f}")
+
+        cap.release()
+        if out_writer:
+            out_writer.release()
+        if self.show_window:
+            cv2.destroyAllWindows()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Predict image quality using trained models.")
-    parser.add_argument("--video", help="Video file path or camera index (e.g., 0 for webcam).")
-    parser.add_argument("--output", help="Output video file path.")
-    parser.add_argument("--max-frames", type=int, help="Maximum frames to process.")
-    parser.add_argument("--predict-dir", default=PREDICT_DIR, help="Directory with images to predict.")
-    parser.add_argument("--model-dir", default=MODEL_DIR, help="Directory with saved models (.joblib)")
+    parser = argparse.ArgumentParser(description="Predict quality using trained models.")
+    parser.add_argument("--video", type=str, help="Video file path or camera index (e.g., '0' for webcam).")
+    parser.add_argument("--output", type=str, help="Output video file path (e.g., annotated video).")
+    parser.add_argument("--max-frames", type=int, help="Maximum number of frames to process in video.")
+    parser.add_argument("--predict-dir", type=Path, default=Path(PREDICT_DIR), help="Directory with images to predict.")
+    parser.add_argument(
+        "--model-dir", type=Path, default=Path(MODEL_DIR), help="Directory with saved models (.joblib)."
+    )
+    parser.add_argument(
+        "--no-display", action="store_true", help="Disable showing OpenCV window during video prediction."
+    )
     args = parser.parse_args()
 
-    logger.info("Loading models...")
-    models = load_models(Path(args.model_dir))
+    # Проверяем директории
+    model_dir = args.model_dir
+    if not model_dir.exists():
+        logger.error(f"Model directory does not exist: {model_dir}")
+        return
+    try:
+        models = load_models(model_dir)
+    except Exception as e:
+        logger.error(f"Error loading models: {e}")
+        return
+
+    predictor = Predictor(models, show_window=not args.no_display)
 
     if args.video:
-        logger.info("Processing video stream...")
-        predict_video(models, args.video, args.output, args.max_frames)
+        logger.info("Starting video prediction...")
+        try:
+            predictor.predict_video(video_source=args.video, output_file=args.output, max_frames=args.max_frames)
+        except Exception as e:
+            logger.error(f"Video prediction failed: {e}")
     else:
-        logger.info("Processing images...")
-        results = predict_images(models, Path(args.predict_dir))
-        print(results.to_string(index=False))
+        predict_dir = args.predict_dir
+        logger.info(f"Starting image prediction in dir: {predict_dir}")
+        try:
+            df = predictor.predict_images_in_dir(predict_dir)
+            if not df.empty:
+                # Вывести в виде таблицы
+                print(df.to_string(index=False))
+                # Можно сохранить CSV:
+                # csv_path = predict_dir / "prediction_results.csv"
+                # df.to_csv(csv_path, index=False)
+                # logger.info(f"Results saved to {csv_path}")
+            else:
+                logger.info("No valid images were processed.")
+        except Exception as e:
+            logger.error(f"Image prediction failed: {e}")
 
 
 if __name__ == "__main__":
