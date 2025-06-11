@@ -1,6 +1,7 @@
 import os
 
 import cv2
+import torch
 
 
 def extract_frames(video_path: str, output_folder: str, frame_interval: int = 1):
@@ -64,3 +65,11 @@ class FeatureExtractor:
 fe = FeatureExtractor()
 print(fe.columns)  # ['brenner_gradient', 'another_feature']
 print(fe.extract_features(10))  # {'brenner_gradient': 121, 'another_feature': 20}
+print(torch.cuda.is_available())
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+x = torch.rand(5, 5).to(device)
+y = torch.rand(5, 5).to(device)
+print(x)
+print(y)
+z = x + y
+print(z)
