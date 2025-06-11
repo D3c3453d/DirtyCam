@@ -41,19 +41,23 @@ class FeatureExtractor:
         self.laplacian_kernel = None
 
     def _init_kernels(self):
-        """Lazily initialize kernels on first call"""
         if self.kernel_x is None:
-            self.kernel_x = torch.tensor(
-                [[1, 0, -1], [2, 0, -2], [1, 0, -1]], dtype=torch.float32, device=self.device
-            ).view(1, 1, 3, 3)
+            # Sobel kernels matching cv2.Sobel for ksize=3
+            # Note: sign does not affect magnitude-based measures
+            kx = torch.tensor(
+                [[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]], dtype=torch.float32, device=self.device
+            )
+            ky = torch.tensor(
+                [[-1.0, -2.0, -1.0], [0.0, 0.0, 0.0], [1.0, 2.0, 1.0]], dtype=torch.float32, device=self.device
+            )
+            self.kernel_x = kx.view(1, 1, 3, 3)
+            self.kernel_y = ky.view(1, 1, 3, 3)
 
-            self.kernel_y = torch.tensor(
-                [[1, 2, 1], [0, 0, 0], [-1, -2, -1]], dtype=torch.float32, device=self.device
-            ).view(1, 1, 3, 3)
-
-            self.laplacian_kernel = torch.tensor(
-                [[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=torch.float32, device=self.device
-            ).view(1, 1, 3, 3)
+            # Laplacian kernel matching cv2.Laplacian
+            lap = torch.tensor(
+                [[0.0, 1.0, 0.0], [1.0, -4.0, 1.0], [0.0, 1.0, 0.0]], dtype=torch.float32, device=self.device
+            )
+            self.laplacian_kernel = lap.view(1, 1, 3, 3)
 
     def extract_features_path(self, path: Path) -> dict | None:
         img = cv2.imread(str(path))
@@ -64,16 +68,18 @@ class FeatureExtractor:
         return self.extract_features(gray_img)
 
     def extract_features(self, gray_img) -> dict | None:
-        # Initialize kernels on first use
         self._init_kernels()
 
+        # Convert to tensor
         gray_tensor = torch.from_numpy(gray_img).float().to(self.device)
+        # Add batch and channel dims
         gray_batch = gray_tensor.unsqueeze(0).unsqueeze(0)
 
         with torch.no_grad():
-            sobel_x = F.conv2d(gray_batch, self.kernel_x, padding=1).squeeze()
-            sobel_y = F.conv2d(gray_batch, self.kernel_y, padding=1).squeeze()
-
+            # Use reflect padding to mimic cv2 border handling
+            padded = F.pad(gray_batch, (1, 1, 1, 1), mode="reflect")
+            sobel_x = F.conv2d(padded, self.kernel_x).squeeze(0).squeeze(0)
+            sobel_y = F.conv2d(padded, self.kernel_y).squeeze(0).squeeze(0)
         return {
             name: getattr(self, name)(gray_tensor=gray_tensor, sobel_x=sobel_x, sobel_y=sobel_y)
             for name in self.columns
@@ -84,87 +90,84 @@ class FeatureExtractor:
     @feature
     def brenner_gradient(self, gray_tensor: torch.Tensor, **kwargs):
         with torch.no_grad():
-            return torch.sum((gray_tensor[:, :-2] - gray_tensor[:, 2:]) ** 2).item()
+            # roll horizontally by -2 same as numpy roll
+            shifted = torch.roll(gray_tensor, shifts=-2, dims=1)
+            diff = (gray_tensor - shifted) ** 2
+            return torch.sum(diff).item()
 
     @feature
     def sobel_variance(self, gray_tensor: torch.Tensor, sobel_x: torch.Tensor, sobel_y: torch.Tensor, **kwargs):
         with torch.no_grad():
             magnitude = torch.sqrt(sobel_x**2 + sobel_y**2)
-            return (torch.mean(magnitude) + torch.var(gray_tensor)).item()
+            # Population variance
+            var = torch.var(gray_tensor, unbiased=False)
+            return (torch.mean(magnitude) + var).item()
 
     @feature
-    def tenengrad(self, sobel_x: torch.Tensor, sobel_y: torch.Tensor, **kwargs):
+    def tenengrad(self, gray_tensor: torch.Tensor, sobel_x: torch.Tensor, sobel_y: torch.Tensor, **kwargs):
         with torch.no_grad():
-            return torch.mean(torch.sqrt(sobel_x**2 + sobel_y**2)).item()
+            mag = torch.sqrt(sobel_x**2 + sobel_y**2)
+            return torch.mean(mag).item()
 
     @feature
     def laplacian(self, gray_tensor: torch.Tensor, **kwargs):
-        self._init_kernels()
         with torch.no_grad():
             gray_batch = gray_tensor.unsqueeze(0).unsqueeze(0)
-            lap = F.conv2d(gray_batch, self.laplacian_kernel, padding=1).squeeze()
-            return torch.var(lap).item()
+            padded = F.pad(gray_batch, (1, 1, 1, 1), mode="reflect")
+            lap = F.conv2d(padded, self.laplacian_kernel).squeeze(0).squeeze(0)
+            # Population variance of laplacian
+            return torch.var(lap, unbiased=False).item()
 
     @feature
     def texture_quality(self, gray_tensor: torch.Tensor, **kwargs):
         def radial_average(arr: torch.Tensor) -> torch.Tensor:
             N = arr.shape[0]
-            # Используем float вместо long для индексов
+            # Create float indices to allow hypot
             y, x = torch.meshgrid(
                 torch.arange(N, device=arr.device, dtype=torch.float32),
                 torch.arange(N, device=arr.device, dtype=torch.float32),
                 indexing="ij",
             )
-            # Вычисляем расстояния с помощью float
-            r = torch.hypot(x - N // 2, y - N // 2).long()
-            r_flat = r.flatten()
+            # Compute radius distances in float, then cast to long for binning
+            r = torch.hypot(x - (N // 2), y - (N // 2)).long().flatten()
             arr_flat = arr.flatten()
-            max_r = r_flat.max().item()
-
+            max_r = r.max().item()
             sums = torch.zeros(max_r + 1, dtype=arr.dtype, device=arr.device)
             counts = torch.zeros(max_r + 1, dtype=arr.dtype, device=arr.device)
-            sums.scatter_add_(0, r_flat, arr_flat)
-            counts.scatter_add_(0, r_flat, torch.ones_like(arr_flat))
-
+            sums.scatter_add_(0, r, arr_flat)
+            counts.scatter_add_(0, r, torch.ones_like(arr_flat))
             return sums / torch.clamp(counts, min=1)
 
-        try:
-            with torch.no_grad():
-                N = min(gray_tensor.shape)
-                if N % 2 == 0:
-                    N -= 1
-                I = gray_tensor[:N, :N]  # NOQA: E741
+        with torch.no_grad():
+            N = min(gray_tensor.shape)
+            if N % 2 == 0:
+                N -= 1
+            I = gray_tensor[:N, :N]  # NOQA: E741
+            I_hat = torch.fft.fftshift(torch.fft.fft2(I))
+            I_hat_abs = torch.abs(I_hat)
 
-                I_hat = torch.fft.fft2(I)
-                I_hat = torch.fft.fftshift(I_hat)
-                I_hat_abs = torch.abs(I_hat)
+            y, x = torch.meshgrid(
+                torch.arange(N, device=I.device, dtype=torch.float32),
+                torch.arange(N, device=I.device, dtype=torch.float32),
+                indexing="ij",
+            )
+            r2 = (x - N // 2) ** 2 + (y - N // 2) ** 2
+            r2[N // 2, N // 2] = 1.0
 
-                # Также используем float здесь
-                y, x = torch.meshgrid(
-                    torch.arange(N, device=I.device, dtype=torch.float32),
-                    torch.arange(N, device=I.device, dtype=torch.float32),
-                    indexing="ij",
-                )
-                r2 = (x - N // 2) ** 2 + (y - N // 2) ** 2
-                r2[N // 2, N // 2] = 1  # avoid division by zero
+            eta = -1.93
+            denom = torch.sum(1.0 / (r2 ** (eta / 2)))
+            cN = (torch.var(I, unbiased=False) / denom) * (N**4)
+            T_hat = cN / (r2 ** (eta / 2))
+            T_hat[N // 2, N // 2] = I_hat_abs[N // 2, N // 2]
 
-                eta = -1.93
-                cN = (torch.var(I) / torch.sum(1 / r2 ** (eta / 2))) * (N**4)
-                T_hat = cN / r2 ** (eta / 2)
-                T_hat[N // 2, N // 2] = I_hat_abs[N // 2, N // 2]
+            K = I_hat_abs / T_hat
+            MTF = radial_average(K)
 
-                K = I_hat_abs / T_hat
-                MTF = radial_average(K)
-
-                b, c = 0.2, 0.8
-                v = torch.arange(len(MTF), device=MTF.device, dtype=torch.float32)
-                CSF = v**c * torch.exp(-b * v)
-                CSF /= torch.sum(CSF)
-
-                return torch.sum(MTF * CSF).item()
-        except Exception as e:
-            logger.error(f"Error in texture_quality: {str(e)}")
-            return 0.0  # Возвращаем значение по умолчанию в случае ошибки
+            b, c = 0.2, 0.8
+            v = torch.arange(len(MTF), device=MTF.device, dtype=torch.float32)
+            CSF = v**c * torch.exp(-b * v)
+            CSF = CSF / torch.sum(CSF)
+            return torch.sum(MTF * CSF).item()
 
     @feature
     def smd(self, gray_tensor: torch.Tensor, **kwargs):
@@ -183,7 +186,10 @@ class FeatureExtractor:
     @feature
     def variance(self, gray_tensor: torch.Tensor, **kwargs):
         with torch.no_grad():
-            return torch.var(gray_tensor).item()
+            # Sum of squared deviations to match original loops: var * N
+            mean = torch.mean(gray_tensor)
+            diff = (gray_tensor - mean) ** 2
+            return torch.sum(diff).item()
 
     @feature
     def energy(self, gray_tensor: torch.Tensor, **kwargs):
@@ -197,16 +203,14 @@ class FeatureExtractor:
         with torch.no_grad():
             u = torch.mean(gray_tensor)
             shifted = gray_tensor[1:, :] * gray_tensor[:-1, :]
+            # original: sum products minus N*M*(u^2)
             return (torch.sum(shifted) - gray_tensor.numel() * (u**2)).item()
 
     @feature
     def entropy(self, gray_tensor: torch.Tensor, **kwargs):
         with torch.no_grad():
-            # Normalize to 0-255 range
-            normalized = (gray_tensor - gray_tensor.min()) / (gray_tensor.max() - gray_tensor.min()) * 255
-            normalized = normalized.byte()
-
-            hist = torch.histc(normalized.float(), bins=256, min=0, max=255)
-            hist_norm = hist / hist.sum()
-            hist_nonzero = hist_norm[hist_norm > 0]
-            return -torch.sum(hist_nonzero * torch.log2(hist_nonzero)).item()
+            tensor = gray_tensor.clone().flatten()
+            hist = torch.histc(tensor.float(), bins=256, min=0, max=255)
+            prob = hist / hist.sum()
+            prob_nonzero = prob[prob > 0]
+            return -torch.sum(prob_nonzero * torch.log2(prob_nonzero)).item()
