@@ -80,8 +80,9 @@ class FeatureExtractor:
             padded = F.pad(gray_batch, (1, 1, 1, 1), mode="reflect")
             sobel_x = F.conv2d(padded, self.kernel_x).squeeze(0).squeeze(0)
             sobel_y = F.conv2d(padded, self.kernel_y).squeeze(0).squeeze(0)
+            lap = F.conv2d(padded, self.laplacian_kernel).squeeze(0).squeeze(0)
         return {
-            name: getattr(self, name)(gray_tensor=gray_tensor, sobel_x=sobel_x, sobel_y=sobel_y)
+            name: getattr(self, name)(gray_tensor=gray_tensor, sobel_x=sobel_x, sobel_y=sobel_y, lap=lap)
             for name in self.columns
         }
 
@@ -92,8 +93,7 @@ class FeatureExtractor:
         with torch.no_grad():
             # roll horizontally by -2 same as numpy roll
             shifted = torch.roll(gray_tensor, shifts=-2, dims=1)
-            diff = (gray_tensor - shifted) ** 2
-            return torch.sum(diff).item()
+            return torch.sum((gray_tensor - shifted) ** 2).item()
 
     @feature
     def sobel_variance(self, gray_tensor: torch.Tensor, sobel_x: torch.Tensor, sobel_y: torch.Tensor, **kwargs):
@@ -110,11 +110,8 @@ class FeatureExtractor:
             return torch.mean(mag).item()
 
     @feature
-    def laplacian(self, gray_tensor: torch.Tensor, **kwargs):
+    def laplacian(self, lap: torch.Tensor, **kwargs):
         with torch.no_grad():
-            gray_batch = gray_tensor.unsqueeze(0).unsqueeze(0)
-            padded = F.pad(gray_batch, (1, 1, 1, 1), mode="reflect")
-            lap = F.conv2d(padded, self.laplacian_kernel).squeeze(0).squeeze(0)
             # Population variance of laplacian
             return torch.var(lap, unbiased=False).item()
 
@@ -209,7 +206,7 @@ class FeatureExtractor:
     @feature
     def entropy(self, gray_tensor: torch.Tensor, **kwargs):
         with torch.no_grad():
-            tensor = gray_tensor.clone().flatten()
+            tensor = gray_tensor.flatten()
             hist = torch.histc(tensor.float(), bins=256, min=0, max=255)
             prob = hist / hist.sum()
             prob_nonzero = prob[prob > 0]
