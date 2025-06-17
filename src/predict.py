@@ -188,7 +188,7 @@ class Predictor:
             skip_interval = 1
 
         processed_count = 0
-        skip_count = -1
+        skip_count = 0
         processing_times = []
         while True:
             ret = cap.grab()
@@ -197,7 +197,7 @@ class Predictor:
                 break
 
             skip_count += 1
-            if skip_count % skip_interval != 0:
+            if skip_count < skip_interval:
                 continue
             skip_count = 0
 
