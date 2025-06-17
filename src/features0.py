@@ -4,8 +4,6 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from brisque import BRISQUE
-from dom import DOM
 from settings import LOG_FORMAT
 
 logging.basicConfig(
@@ -29,10 +27,6 @@ class FeatureExtractor0:
             return self.func.__get__(instance, owner)
 
     columns = []
-
-    def __init__(self):
-        self._brisque = BRISQUE()
-        self._dom = DOM()
 
     def extract_features_path(self, path: Path) -> dict | None:
         img = cv2.imread(str(path))

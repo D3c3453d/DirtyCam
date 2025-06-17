@@ -4,8 +4,6 @@ from pathlib import Path
 import cv2
 import torch
 import torch.nn.functional as F
-from brisque import BRISQUE
-from dom import DOM
 from settings import LOG_FORMAT
 
 logging.basicConfig(
@@ -32,8 +30,6 @@ class FeatureExtractor:
 
     def __init__(self):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self._brisque = BRISQUE()
-        self._dom = DOM()
 
         # Initialize kernels on first use
         self.kernel_x = None
