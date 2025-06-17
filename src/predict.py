@@ -146,6 +146,7 @@ class Predictor:
         video_source: str,
         output_file: str = None,
         max_frames: int = None,
+        skip_interval: int = None,
         target_fps_display: float = 30.0,
     ) -> None:
         """
@@ -153,6 +154,7 @@ class Predictor:
         video_source: либо строка с путём, либо индекс камеры ("0", "1", ...).
         output_file: если указан, сохраняем аннотированное видео туда.
         max_frames: при необходимости ограничить число кадров.
+        skip_interval: интервал пропуска кадров.
         target_fps_display: задержка между кадрами для отображения (в FPS).
         """
         # Открываем источник
@@ -182,17 +184,30 @@ class Predictor:
             # Можно подогнать размер окна при желании
             cv2.resizeWindow(self.window_name, 1600, 1000)
 
-        frame_count = 0
-        processing_times = []
+        if skip_interval is None:
+            skip_interval = 1
 
+        processed_count = 0
+        skip_count = -1
+        processing_times = []
         while True:
-            ret, frame = cap.read()
+            ret = cap.grab()
             if not ret:
-                logger.info("End of video stream or cannot read frame.")
+                logger.info("Сannot grab frame.")
                 break
 
-            frame_count += 1
-            if max_frames is not None and frame_count > max_frames:
+            skip_count += 1
+            if skip_count % skip_interval != 0:
+                continue
+            skip_count = 0
+
+            ret, frame = cap.retrieve()
+            if not ret:
+                logger.info("Cannot retrieve frame.")
+                break
+
+            processed_count += 1
+            if max_frames is not None and processed_count > max_frames:
                 logger.info(f"Reached max frames: {max_frames}. Stopping.")
                 break
 
@@ -204,15 +219,16 @@ class Predictor:
                     preds = ensemble_predict(self.models, features)
                     self._draw_overlay(frame, preds)
                 else:
-                    logger.debug(f"No features for frame {frame_count}")
+                    logger.debug(f"No features for frame {processed_count}")
             except Exception as e:
-                logger.error(f"Error processing frame {frame_count}: {e}")
+                logger.error(f"Error processing frame {processed_count}: {e}")
 
             elapsed = time.time() - start
             processing_times.append(elapsed)
             fps_proc = 1.0 / elapsed if elapsed > 0 else 0.0
             # Рисуем FPS обработки
-            cv2.putText(frame, f"Proc FPS: {fps_proc:.1f}", (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+            cv2.putText(frame, f"Elapsed: {elapsed}", (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+            cv2.putText(frame, f"Proc FPS: {fps_proc:.1f}", (20, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
             # Показать окно
             if self.show_window:
@@ -234,7 +250,7 @@ class Predictor:
         # Вывод средней производительности
         if processing_times:
             avg_fps = 1.0 / np.mean(processing_times)
-            logger.info(f"Processed {frame_count} frames. Average processing FPS: {avg_fps:.1f}")
+            logger.info(f"Processed {processed_count} frames. Average processing FPS: {avg_fps:.1f}")
 
         cap.release()
         if out_writer:
@@ -248,6 +264,7 @@ def main():
     parser.add_argument("--video", type=str, help="Video file path or camera index (e.g., '0' for webcam).")
     parser.add_argument("--output", type=str, help="Output video file path (e.g., annotated video).")
     parser.add_argument("--max-frames", type=int, help="Maximum number of frames to process in video.")
+    parser.add_argument("--skip-interval", type=int, help="Only the n-th frame will be processed.")
     parser.add_argument("--predict-dir", type=Path, default=Path(PREDICT_DIR), help="Directory with images to predict.")
     parser.add_argument(
         "--model-dir", type=Path, default=Path(MODEL_DIR), help="Directory with saved models (.joblib)."
@@ -273,7 +290,12 @@ def main():
     if args.video:
         logger.info("Starting video prediction...")
         try:
-            predictor.predict_video(video_source=args.video, output_file=args.output, max_frames=args.max_frames)
+            predictor.predict_video(
+                video_source=args.video,
+                output_file=args.output,
+                max_frames=args.max_frames,
+                skip_interval=args.skip_interval,
+            )
         except Exception as e:
             logger.error(f"Video prediction failed: {e}")
     else:
